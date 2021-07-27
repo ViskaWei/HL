@@ -120,3 +120,4 @@ datasets/
 *trained_model
 *.out
 *img
+*dataset
