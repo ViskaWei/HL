@@ -12,7 +12,7 @@ class Fisher(object):
     """
     Fisher matrix class.
     """
-    def __init__(self, wave, flux, mask, start=4500, end=9500, CO=False):
+    def __init__(self, wave, flux, mask, start=4500, end=9500, CO=False, test=False):
         super().__init__()
         self.wave = None
         self.wvln = None
@@ -28,17 +28,21 @@ class Fisher(object):
         self.lp = None
         self.lpFe = None
 
+        self.test = test
+
         self.vF = np.array([-2.5, -2.25, -2., -1.75, -1.5,
                             -1.25, -1., -0.75, -0.5, -0.25,  
                             0., 0.25, 0.5, 0.75])
 
+        self.v
+
         self.init(wave, flux, mask, start, end, CO)
 
-    def init(self, wave, flux, mask, start, end, CO, test=True):
+    def init(self, wave, flux, mask, start, end, CO):
         if not CO: 
             flux = flux[..., 3, 1, :]
             mask = mask[..., 3, 1]
-        if test:
+        if self.test:
             flux = flux[2:6, 10:16, 0:4]
             mask = mask[2:6, 10:16 ,0:4]
 
@@ -67,15 +71,16 @@ class Fisher(object):
         d = len(flux.shape)
         # flux[~mask] = 0.0
         MID  = flux[1:-1, 1:-1, 1:-1]
+        MID_MASK = mask[1:-1, 1:-1, 1:-1]
         U, D = flux[ :-2, 1:-1, 1:-1], flux[2:  , 1:-1, 1:-1]
         S, C = flux[1:-1,  :-2, 1:-1], flux[1:-1, 2:  , 1:-1]
         T, B = flux[1:-1,  :-2,  :-2], flux[1:-1, 2:  , 2:  ]
         sums = (U + D + S + C + T + B)
         laplace = sums / np.round(sums) -  MID
         laplace = abs(np.divide(laplace, MID))
-        # laplace[np.isnan(laplace)] = 0.0  # Set NaN to zero
-        # self.lp = laplace
-        return laplace
+        laplace[~MID_MASK] = 0.0  # Set NaN to zero
+        self.lp = laplace
+        # return laplace
 
     # def get_laplace(self, flux=None, mask=None):
     #     flux = flux or self.flux
@@ -88,35 +93,52 @@ class Fisher(object):
         if self.lp is None:
             self.get_laplace()
 
-        lp  = np.reshape(self.lp, (self.lp.shape[0], -1, self.wvln))
-        lpFe = np.mean(lp, axis = 1)
+        lp  = self.lp.reshape(self.lp.shape[0], -1, self.wvln)
+        lpFe = lp.mean(axis = 1)
 
         if norm:
-            lpFe = np.divide(lpFe, np.expand_dims(lpFe.std(axis=1), -1))
-
+            lpFe = lpFe / lpFe.std(axis=1)[:, None]
+            # lpFe = np.divide(lpFe, np.expand_dims(lpFe.std(axis=1), -1))
         self.lpFe = lpFe
 
-    def plot_lp(self, s, ax=None, mR=0.6):
+    def get_lpLg(self, norm=True):
+        if self.lp is None:
+            self.get_laplace()
+
+        lp = self.lp.reshape(-1, self.lp.shape[2], self.wvln)
+        lpLg = lp.mean(axis = 0)
+
+        if norm:
+            lpLg = lpLg / lpLg.std(axis=1)[:, None]
+        self.lpLg = lpLg
+
+
+    def plot_lp(self, s, ax=None, mR=0.6, label=None):
         s = s + 1
         vmin, vmax = np.quantile(s, mR), np.quantile(s, 0.95)
         print(vmin, vmax)
         ax = ax or plt.gca()
         ax.matshow(s, norm = LogNorm(), aspect="auto", cmap="jet", vmin=vmin, vmax=vmax)
-        ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
-        ax.set_yticklabels(self.vF)
-        ax.set_ylabel('Fe_H')
+
         self.set_wv_ticks(ax)
 
     def plot_Fe_lp(self):
         if self.lpFe is None:
             self.get_lpFe()
-        f, (ax0, ax1) = plt.subplots(2, 1, figsize=(25,8))
+        f, (ax0, ax1) = plt.subplots(2, 1, figsize=(16,6), facecolor='w')
         self.plot_lp(self.lpFe, ax0, mR=0.6)
         self.plot_lick(ax1)
 
 
+    def set_yticks(self, para):
+        if para == "FeH":
+            ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+            ax.set_yticklabels(self.vF)
+        elif para == "Logg":
+            ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+            ax.set_yticklabels(self.vL)
 
-
+        ax.set_ylabel(para)
 
 
 
@@ -152,7 +174,7 @@ class Fisher(object):
         self.lick_color = cBands
 
     def plot_lick(self, ax=None):
-        ax = ax or plt.subplots(figsize=(20,4))[1]
+        ax = ax or plt.subplots(figsize=(16,4))[1]
         # ax.grid(True)
         ax.set_ylim(0, 1)
         l_max = 1
@@ -165,6 +187,8 @@ class Fisher(object):
 
         self.set_unique_legend(ax)
         self.set_wv_ticks(ax, lim=True)
+        ax.set_ylabel('LICK')
+
 
     def set_unique_legend(self, ax):
         handles, labels = ax.get_legend_handles_labels()
